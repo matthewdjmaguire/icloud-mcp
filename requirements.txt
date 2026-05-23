@@ -1,0 +1,7 @@
+azure-functions
+caldav
+vobject
+requests
+imapclient
+fastmcp
+python-dotenv
