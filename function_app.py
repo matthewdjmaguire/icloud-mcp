@@ -13,7 +13,7 @@ _mcp_process = None
 _mcp_ready = False
 
 async def ensure_mcp_server():
-    """Start the FastMCP server subprocess if not already running."""
+    """Start the FastMCP subprocess if not already running."""
     global _mcp_process, _mcp_ready
 
     if _mcp_process is not None and _mcp_process.poll() is None:
@@ -37,12 +37,6 @@ async def ensure_mcp_server():
 @app.route(route="mcp", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)
 async def mcp_endpoint(req: func.HttpRequest) -> func.HttpResponse:
 
-    # Validate API key
-    api_key = req.headers.get("x-api-key")
-    expected = os.environ.get("MCP_API_KEY")
-    if not api_key or api_key != expected:
-        return func.HttpResponse("Unauthorized", status_code=401)
-
     # Ensure the MCP server subprocess is running
     await ensure_mcp_server()
 
@@ -50,13 +44,12 @@ async def mcp_endpoint(req: func.HttpRequest) -> func.HttpResponse:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             url = f"http://localhost:8000/mcp"
-            
-            # Forward method, headers (minus host), and body
+
             headers = {
                 k: v for k, v in req.headers.items()
-                if k.lower() not in ("host", "x-api-key")
+                if k.lower() not in ("host",)
             }
-            
+
             response = await client.request(
                 method=req.method,
                 url=url,
