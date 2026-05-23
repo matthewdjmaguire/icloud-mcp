@@ -1,4 +1,5 @@
 azure-functions
+httpx
 caldav
 vobject
 requests
