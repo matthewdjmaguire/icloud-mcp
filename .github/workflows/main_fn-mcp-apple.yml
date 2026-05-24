@@ -21,13 +21,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies using Linux-compatible Docker image
+      - name: Install dependencies using matching Linux image
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             mcr.microsoft.com/azure-functions/python:4-python3.12 \
-            bash -c "pip install -r requirements.txt --target='.python_packages/lib/site-packages' --no-cache-dir"
+            bash -c "pip install -r requirements.txt \
+              --target='.python_packages/lib/site-packages' \
+              --no-cache-dir"
+
+      - name: Create deployment zip
+        run: |
+          zip -r deploy.zip . \
+            --exclude "*.git*" \
+            --exclude "*.github*" \
+            --exclude "Dockerfile" \
+            --exclude "docker-compose.yml" \
+            --exclude ".env*" \
+            --exclude "__pycache__/*" \
+            --exclude "*.pyc"
+          echo "Zip created: $(du -sh deploy.zip)"
 
       - name: Azure Login
         uses: azure/login@v2
@@ -36,10 +50,10 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy to Azure Functions
-        uses: Azure/functions-action@v1
-        with:
-          app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-          package: '.'
-          scm-do-build-during-deployment: false
-          enable-oryx-build: false
+      - name: Deploy zip to Azure Functions
+        run: |
+          az functionapp deployment source config-zip \
+            --resource-group rg-mcp-calendar \
+            --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+            --src deploy.zip \
+            --timeout 300
