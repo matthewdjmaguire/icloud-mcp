@@ -21,10 +21,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies using Linux-compatible Docker image
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            mcr.microsoft.com/azure-functions/python:4-python3.12 \
+            bash -c "pip install -r requirements.txt --target='.python_packages/lib/site-packages' --no-cache-dir"
 
       - name: Azure Login
         uses: azure/login@v2
@@ -38,5 +41,5 @@ jobs:
         with:
           app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
           package: '.'
-          scm-do-build-during-deployment: true
-          enable-oryx-build: true
+          scm-do-build-during-deployment: false
+          enable-oryx-build: false
