@@ -6,6 +6,20 @@ import os
 import sys
 import logging
 
+# Install packages at runtime if not already present
+_packages_dir = "/home/site/wwwroot/.python_packages/lib/site-packages"
+if not os.path.exists(os.path.join(_packages_dir, "fastmcp")):
+    subprocess.run([
+        sys.executable, "-m", "pip", "install",
+        "-r", "/home/site/wwwroot/requirements.txt",
+        "--target", _packages_dir,
+        "--no-cache-dir",
+        "--quiet"
+    ], check=True)
+    # Add to path immediately
+    if _packages_dir not in sys.path:
+        sys.path.insert(0, _packages_dir)
+
 app = func.FunctionApp()
 
 _mcp_process = None
