@@ -1,3 +1,4 @@
+-e .
 azure-functions
 httpx
 caldav
