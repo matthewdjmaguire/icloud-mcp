@@ -24,6 +24,7 @@ async def ensure_mcp_server():
 
     env = os.environ.copy()
     env["PYTHONPATH"] = (
+        f"{WWWROOT}/src:"
         f"{WWWROOT}:"
         f"{WWWROOT}/.python_packages/lib/site-packages:"
         + env.get("PYTHONPATH", "")
