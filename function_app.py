@@ -8,9 +8,10 @@ import logging
 
 app = func.FunctionApp()
 
-# Global subprocess handle — persists between warm invocations
 _mcp_process = None
 _mcp_ready = False
+
+WWWROOT = "/home/site/wwwroot"
 
 async def ensure_mcp_server():
     """Start the FastMCP subprocess if not already running."""
@@ -20,31 +21,73 @@ async def ensure_mcp_server():
         return  # Already running
 
     logging.info("Starting FastMCP subprocess...")
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        f"{WWWROOT}:"
+        f"{WWWROOT}/.python_packages/lib/site-packages:"
+        + env.get("PYTHONPATH", "")
+    )
+    env["PORT"] = "8000"
+
     _mcp_process = subprocess.Popen(
-        [sys.executable, "run.py", "--http", "--port", "8000"],
+        [sys.executable, f"{WWWROOT}/run.py", "--http", "--port", "8000"],
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=os.environ.copy()
+        stderr=subprocess.STDOUT,  # Merge stderr into stdout
+        cwd=WWWROOT,               # Run from wwwroot
+        env=env
     )
 
-    # Give it a moment to start up
-    await asyncio.sleep(2)
-    _mcp_ready = True
-    logging.info("FastMCP subprocess started.")
+    # Poll until ready or failed
+    for attempt in range(20):
+        await asyncio.sleep(1)
+
+        # Log subprocess output
+        if _mcp_process.stdout:
+            try:
+                line = _mcp_process.stdout.readline()
+                if line:
+                    logging.info(f"FastMCP: {line.decode().strip()}")
+            except Exception:
+                pass
+
+        # Check if process died
+        if _mcp_process.poll() is not None:
+            logging.error(f"FastMCP exited with code: {_mcp_process.returncode}")
+            # Drain remaining output
+            try:
+                remaining = _mcp_process.stdout.read()
+                if remaining:
+                    logging.error(f"FastMCP final output: {remaining.decode().strip()}")
+            except Exception:
+                pass
+            return
+
+        # Check if accepting connections
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                await client.get("http://localhost:8000/mcp")
+                logging.info(f"FastMCP ready after {attempt + 1}s")
+                _mcp_ready = True
+                return
+        except (httpx.ConnectError, httpx.TimeoutException):
+            logging.info(f"Waiting for FastMCP... attempt {attempt + 1}")
+            continue
+
+    logging.error("FastMCP failed to start after 20 seconds")
 
 
 @app.function_name(name="mcp")
 @app.route(route="mcp", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)
 async def mcp_endpoint(req: func.HttpRequest) -> func.HttpResponse:
 
-    # Ensure the MCP server subprocess is running
     await ensure_mcp_server()
 
-    # Proxy the request to the local FastMCP server
+    if not _mcp_ready:
+        return func.HttpResponse("MCP server unavailable", status_code=503)
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            url = f"http://localhost:8000/mcp"
-
             headers = {
                 k: v for k, v in req.headers.items()
                 if k.lower() not in ("host",)
@@ -52,7 +95,7 @@ async def mcp_endpoint(req: func.HttpRequest) -> func.HttpResponse:
 
             response = await client.request(
                 method=req.method,
-                url=url,
+                url="http://localhost:8000/mcp",
                 headers=headers,
                 content=req.get_body(),
             )
@@ -81,51 +124,5 @@ async def health(req: func.HttpRequest) -> func.HttpResponse:
     run_on_startup=True
 )
 async def warmup(timer: func.TimerRequest) -> None:
-    """Keeps the function warm and the subprocess alive."""
     await ensure_mcp_server()
     logging.info("Warm-up ping complete.")
-
-async def ensure_mcp_server():
-    """Start the FastMCP subprocess if not already running."""
-    global _mcp_process, _mcp_ready
-
-    if _mcp_process is not None and _mcp_process.poll() is None:
-        return  # Already running
-
-    logging.info("Starting FastMCP subprocess...")
-    _mcp_process = subprocess.Popen(
-        [sys.executable, "run.py", "--http", "--port", "8000"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=os.environ.copy()
-    )
-
-    # Wait and poll for readiness
-    for attempt in range(15):
-        await asyncio.sleep(1)
-
-        # Log any subprocess output to help diagnose
-        if _mcp_process.stderr:
-            try:
-                line = _mcp_process.stderr.readline()
-                if line:
-                    logging.error(f"FastMCP stderr: {line.decode().strip()}")
-            except Exception:
-                pass
-
-        # Check if process already died
-        if _mcp_process.poll() is not None:
-            logging.error(f"FastMCP subprocess exited with code {_mcp_process.returncode}")
-            return
-
-        try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                r = await client.get("http://localhost:8000/")
-                logging.info(f"FastMCP ready after {attempt + 1}s")
-                _mcp_ready = True
-                return
-        except (httpx.ConnectError, httpx.TimeoutException):
-            logging.info(f"Waiting for FastMCP... attempt {attempt + 1}")
-            continue
-
-    logging.error("FastMCP subprocess failed to start after 15 seconds")
