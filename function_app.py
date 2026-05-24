@@ -33,8 +33,8 @@ async def ensure_mcp_server():
     _mcp_process = subprocess.Popen(
         [sys.executable, f"{WWWROOT}/run.py", "--http", "--port", "8000"],
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,  # Merge stderr into stdout
-        cwd=WWWROOT,               # Run from wwwroot
+        stderr=subprocess.PIPE,  # Separate from stdout
+        cwd=WWWROOT,
         env=env
     )
 
@@ -42,7 +42,18 @@ async def ensure_mcp_server():
     for attempt in range(20):
         await asyncio.sleep(1)
 
-        # Log subprocess output
+        # Check if process died — drain full output for diagnostics
+        if _mcp_process.poll() is not None:
+            try:
+                stdout, stderr = _mcp_process.communicate(timeout=5)
+                for line in (stdout + stderr).decode().strip().splitlines():
+                    logging.error(f"FastMCP: {line}")
+            except Exception as e:
+                logging.error(f"Could not read subprocess output: {e}")
+            logging.error(f"FastMCP exited with code: {_mcp_process.returncode}")
+            return
+
+        # Log any stdout lines while waiting
         if _mcp_process.stdout:
             try:
                 line = _mcp_process.stdout.readline()
@@ -50,18 +61,6 @@ async def ensure_mcp_server():
                     logging.info(f"FastMCP: {line.decode().strip()}")
             except Exception:
                 pass
-
-        # Check if process died
-        if _mcp_process.poll() is not None:
-            logging.error(f"FastMCP exited with code: {_mcp_process.returncode}")
-            # Drain remaining output
-            try:
-                remaining = _mcp_process.stdout.read()
-                if remaining:
-                    logging.error(f"FastMCP final output: {remaining.decode().strip()}")
-            except Exception:
-                pass
-            return
 
         # Check if accepting connections
         try:
