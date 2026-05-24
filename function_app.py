@@ -1,13 +1,10 @@
-import azure.functions as func
-import httpx
 import subprocess
-import asyncio
-import os
 import sys
-import logging
+import os
 
-# Install packages at runtime if not already present
+# Bootstrap: install packages on the actual runtime host if needed
 _packages_dir = "/home/site/wwwroot/.python_packages/lib/site-packages"
+os.makedirs(_packages_dir, exist_ok=True)
 if not os.path.exists(os.path.join(_packages_dir, "fastmcp")):
     subprocess.run([
         sys.executable, "-m", "pip", "install",
@@ -16,9 +13,13 @@ if not os.path.exists(os.path.join(_packages_dir, "fastmcp")):
         "--no-cache-dir",
         "--quiet"
     ], check=True)
-    # Add to path immediately
-    if _packages_dir not in sys.path:
-        sys.path.insert(0, _packages_dir)
+if _packages_dir not in sys.path:
+    sys.path.insert(0, _packages_dir)
+
+import azure.functions as func
+import httpx
+import asyncio
+import logging
 
 app = func.FunctionApp()
 
@@ -28,11 +29,10 @@ _mcp_ready = False
 WWWROOT = "/home/site/wwwroot"
 
 async def ensure_mcp_server():
-    """Start the FastMCP subprocess if not already running."""
     global _mcp_process, _mcp_ready
 
     if _mcp_process is not None and _mcp_process.poll() is None:
-        return  # Already running
+        return
 
     logging.info("Starting FastMCP subprocess...")
 
@@ -40,7 +40,7 @@ async def ensure_mcp_server():
     env["PYTHONPATH"] = (
         f"{WWWROOT}/src:"
         f"{WWWROOT}:"
-        f"{WWWROOT}/.python_packages/lib/site-packages:"
+        f"{_packages_dir}:"
         + env.get("PYTHONPATH", "")
     )
     env["PORT"] = "8000"
@@ -48,16 +48,14 @@ async def ensure_mcp_server():
     _mcp_process = subprocess.Popen(
         [sys.executable, f"{WWWROOT}/run.py", "--http", "--port", "8000"],
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,  # Separate from stdout
+        stderr=subprocess.PIPE,
         cwd=WWWROOT,
         env=env
     )
 
-    # Poll until ready or failed
     for attempt in range(20):
         await asyncio.sleep(1)
 
-        # Check if process died — drain full output for diagnostics
         if _mcp_process.poll() is not None:
             try:
                 stdout, stderr = _mcp_process.communicate(timeout=5)
@@ -68,16 +66,6 @@ async def ensure_mcp_server():
             logging.error(f"FastMCP exited with code: {_mcp_process.returncode}")
             return
 
-        # Log any stdout lines while waiting
-        if _mcp_process.stdout:
-            try:
-                line = _mcp_process.stdout.readline()
-                if line:
-                    logging.info(f"FastMCP: {line.decode().strip()}")
-            except Exception:
-                pass
-
-        # Check if accepting connections
         try:
             async with httpx.AsyncClient(timeout=2.0) as client:
                 await client.get("http://localhost:8000/mcp")
@@ -106,14 +94,12 @@ async def mcp_endpoint(req: func.HttpRequest) -> func.HttpResponse:
                 k: v for k, v in req.headers.items()
                 if k.lower() not in ("host",)
             }
-
             response = await client.request(
                 method=req.method,
                 url="http://localhost:8000/mcp",
                 headers=headers,
                 content=req.get_body(),
             )
-
             return func.HttpResponse(
                 body=response.content,
                 status_code=response.status_code,
