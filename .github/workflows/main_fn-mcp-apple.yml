@@ -53,7 +53,7 @@ jobs:
       - name: Deploy zip to Azure Functions
         run: |
           az functionapp deployment source config-zip \
-            --resource-group rg-mcp-calendar \
-            --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+            --resource-group rg-mcp-apple \
+            --name fn-mcp-apple \
             --src deploy.zip \
             --timeout 300
