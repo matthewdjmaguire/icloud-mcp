@@ -21,15 +21,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies using matching Linux image
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            mcr.microsoft.com/azure-functions/python:4-python3.12 \
-            bash -c "pip install -r requirements.txt \
-              --target='.python_packages/lib/site-packages' \
-              --no-cache-dir"
+      - name: Confirm requirements.txt exists
+        run: cat requirements.txt
 
       - name: Create deployment zip
         run: |
